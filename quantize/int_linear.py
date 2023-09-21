@@ -4,28 +4,18 @@ import torch.nn.functional as F
 from quantize.quantizer import UniformAffineQuantizer
 
 
-
-
-
-
 class QuantLinear(nn.Module):
     """
-    Quantized Module that can perform quantized convolution or normal convolution.
+    Quantized Module that can perform quantized convolution/linear or normal convolution/linear.
     To activate quantization, please use set_quant_state function.
     """
-    def __init__(
-        self,
-        org_module: nn.Linear,
-        weight_quant_params: dict = {},
-        act_quant_params: dict = {},
-        disable_input_quant=False,
-    ):
+    def __init__(self, org_module: nn.Linear, weight_quant_params: dict = {}, act_quant_params: dict = {}, disable_input_quant=False):
         super().__init__()
         self.fwd_kwargs = dict()
         self.fwd_func = F.linear
-        self.register_buffer('weight',org_module.weight)
+        self.register_buffer('weight', org_module.weight)
         if org_module.bias is not None:
-            self.register_buffer('bias',org_module.bias)
+            self.register_buffer('bias', org_module.bias)
         else:
             self.bias = None
         self.in_features = org_module.in_features
@@ -43,8 +33,6 @@ class QuantLinear(nn.Module):
         self.disable_input_quant = disable_input_quant
         self.use_temporary_parameter = False
 
-    
-    
     def forward(self, input: torch.Tensor):
         if self.use_temporary_parameter:
             weight = self.temp_weight
@@ -60,7 +48,6 @@ class QuantLinear(nn.Module):
             input = self.act_quantizer(input)
         
         out = self.fwd_func(input, weight, bias, **self.fwd_kwargs)
-
 
         return out
 
