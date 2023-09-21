@@ -5,24 +5,16 @@ from quantize.quantizer import UniformAffineQuantizer
 
 
 class QuantMatMul(nn.Module):
-    def __init__(
-        self,
-        x1_quant_params: dict = {},
-        x2_quant_params: dict = {},
-        disable_act_quant=False,
-        matmul_func=torch.bmm,
-    ):
+    def __init__(self, x1_quant_params: dict = {}, x2_quant_params: dict = {}, disable_act_quant=False, matmul_func=torch.bmm):
         super().__init__()
-        # de-activate the quantized forward default
+        # de-activate the quantized forward by default
         self.use_act_quant = False
         # initialize quantizer
         self.i_cluster_counts = None
         self.x1_quantizer = UniformAffineQuantizer(**x1_quant_params)
         self.x2_quantizer = UniformAffineQuantizer(**x2_quant_params)
-        self.matmul_func = matmul_func
-
+        self.matmul_func  = matmul_func
         self.disable_act_quant = disable_act_quant
-
 
     def set_quant_state(self, weight_quant: bool = False, act_quant: bool = False):
         self.use_weight_quant = weight_quant
