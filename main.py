@@ -1,20 +1,20 @@
-import os
-import sys
-import random
 import numpy as np
-from models.LMClass import LMClass
-import torch
-import time
-from datautils import get_loaders
-from lm_eval import evaluator
-from pprint import pprint
-from parallel_utils import map_layers_to_multi_gpus, get_lowest_occupied_gpu
-import torch.nn as nn
-from quantize.omniquant import omniquant
 from tqdm import tqdm
-import utils
 from pathlib import Path
+from pprint import pprint
+import os, sys, random, time, pdb
+
+import torch
+import torch.nn as nn
+
+import utils
+from lm_eval import evaluator
+from models.LMClass import LMClass
+from datautils import get_loaders
 from categories import subcategories, categories
+from parallel_utils import map_layers_to_multi_gpus, get_lowest_occupied_gpu
+
+from quantize.omniquant import omniquant
 
 from models.int_llama_layer import QuantLlamaDecoderLayer
 from models.int_opt_layer import QuantOPTDecoderLayer
@@ -24,12 +24,13 @@ try:
 except ImportError:
     print("If want to quantize llave models, you should manually install llava from https://github.com/haotian-liu/LLaVA")
 
-import pdb
-
 
 torch.backends.cudnn.benchmark = True
 
 net_choices = [
+    "2B",
+    "7B",
+    "7B_chat",
     "opt-125m",
     "opt-1.3b",
     "opt-2.7b",
@@ -66,7 +67,6 @@ def evaluate(lm, args, logger):
             lm.model.model.decoder.embed_tokens.to(input_device)
             lm.model.model.decoder.final_layer_norm.to(output_device)
             lm.model.lm_head.to(output_device)
-
         elif "llama" in args.net.lower():
             map_layers_to_multi_gpus(lm.model.model.layers)
             input_device = lm.model.model.layers[0].device
@@ -93,9 +93,8 @@ def evaluate(lm, args, logger):
         elif "falcon" in args.net.lower():
             lm.model.transformer = lm.model.transformer.to(lm.device)
 
-
     if args.eval_ppl:
-        for dataset in ["wikitext2", "ptb", "c4","ptb-new",'c4-new']:
+        for dataset in ["wikitext2", "ptb", "c4", "ptb-new", 'c4-new']:
             cache_testloader = f'{args.cache_dir}/testloader_{args.model_family}_{dataset}_all.cache'
             if os.path.exists(cache_testloader):
                 testloader = torch.load(cache_testloader)
@@ -197,10 +196,7 @@ def main():
     parser.add_argument("--save_dir", default=None, type=str, help="direction for saving fake quantization model")
     parser.add_argument("--resume", type=str, default=None)
     parser.add_argument("--real_quant", default=False, action="store_true",)
-    parser.add_argument("--calib_dataset",type=str,default="wikitext2",
-        choices=["wikitext2", "ptb", "c4", "mix","pile"],
-        help="Where to extract calibration data from.",
-    )
+    parser.add_argument("--calib_dataset", type=str, default="wikitext2", choices=["wikitext2", "ptb", "c4", "mix", "pile"], help="Where to extract calibration data from.")
     parser.add_argument("--nsamples", type=int, default=128, help="Number of calibration data samples.")
     parser.add_argument("--batch_size", type=int, default=1, help="batch size.")
     parser.add_argument("--seed", type=int, default=2, help="Seed for sampling the calibration data.")
@@ -210,21 +206,22 @@ def main():
     parser.add_argument("--wbits", type=int, default=4)
     parser.add_argument("--abits", type=int, default=4)
     parser.add_argument("--group_size", type=int, default=None)
-    parser.add_argument("--alpha", type=float, default=0.5)
+    parser.add_argument("--alpha",  type=float, default=0.5)
     parser.add_argument("--let_lr", type=float, default=5e-3)
     parser.add_argument("--lwc_lr", type=float, default=1e-2)
     parser.add_argument("--wd", type=float, default=0)
     parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--let",default=False, action="store_true",help="activate learnable equivalent transformation")
-    parser.add_argument("--lwc",default=False, action="store_true",help="activate learnable weight clipping")
+    parser.add_argument("--let", default=False, action="store_true", help="activate learnable equivalent transformation")
+    parser.add_argument("--lwc", default=False, action="store_true", help="activate learnable weight clipping")
     parser.add_argument("--aug_loss", default=False, action="store_true", help="calculate additional loss with same input")
-    parser.add_argument("--symmetric",default=False, action="store_true", help="symmetric quantization")
+    parser.add_argument("--symmetric", default=False, action="store_true", help="symmetric quantization")
     parser.add_argument("--a_dynamic_method", type=str, default="per_token", choices=["per_token"])
     parser.add_argument("--w_dynamic_method", type=str, default="per_channel", choices=["per_channel"])
     parser.add_argument("--limit", type=int, default=-1)
     parser.add_argument("--multigpu", action="store_true", help="at eval, map model to multiple gpus")
     parser.add_argument("--deactive_amp", action="store_true", help="deactivate AMP when 8<=bits<16")
-    parser.add_argument("--net", type=str, default=None, choices=net_choices)
+    # parser.add_argument("--net", type=str, default=None, choices=net_choices)
+    parser.add_argument("--net", type=str, default=None)
     parser.add_argument("--act-scales", type=str, default=None)
     parser.add_argument("--act-shifts", type=str, default=None)
 
@@ -238,7 +235,7 @@ def main():
     if args.epochs > 0:
         assert args.lwc or args.let
         
-    if (args.wbits<16 and args.wbits>=8) or (args.abits<16 and args.abits>=8):
+    if (args.wbits < 16 and args.wbits >= 8) or (args.abits < 16 and args.abits >= 8):
         args.deactive_amp = True
 
     # init logger
@@ -264,7 +261,6 @@ def main():
         param.requires_grad = False
 
     
-
     args.weight_quant_params = {
         "n_bits": args.wbits,
         "per_channel_axes": [0],
@@ -314,7 +310,7 @@ def main():
         args.act_shifts = f'./act_shifts/{args.net}.pt'
 
     # quantization
-    if args.wbits < 16 or args.abits <16:
+    if args.wbits < 16 or args.abits < 16:
         logger.info("=== start quantization ===")
         tick = time.time()     
         # load calibration dataset
