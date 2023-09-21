@@ -1,15 +1,14 @@
-import torch
+import re, os, time, subprocess, torch
 import torch.nn as nn
 from typing import List
 from functools import partial
-import subprocess
-import re
-import os
-import time
-import pdb
+
+
+num_gpus = torch.cuda.device_count()
 
 
 def nvidia_smi_memory_info():
+    
     result = subprocess.run(
         [
             "nvidia-smi",
@@ -19,6 +18,7 @@ def nvidia_smi_memory_info():
         stdout=subprocess.PIPE,
         text=True,
     )
+
     output = result.stdout.split("\n")[:-1]
 
     gpu_memory_info = []
@@ -36,15 +36,13 @@ def nvidia_smi_memory_info():
     return gpu_memory_info
 
 
-num_gpus = torch.cuda.device_count()
-
-
 def get_gpu_memory():
     memory_info = []
     gpu_memory_info = nvidia_smi_memory_info()
 
     try:
         gpu_index = [int(k) for k in os.environ['CUDA_VISIBLE_DEVICES'].split(',')]
+
     except KeyError:
         gpu_index = [x["id"] for x in gpu_memory_info]
 
@@ -53,6 +51,7 @@ def get_gpu_memory():
         total_memory = gpu["total_memory"]
         used_memory = gpu["used_memory"]
         memory_info.append((gpu_id, total_memory, used_memory))
+
     return memory_info
 
 
@@ -157,9 +156,7 @@ def add_forward_hooks(layer_gpu_map):
 
 
 def map_layers_to_multi_gpus(layers):
-
     layer_gpu_map = assign_layers_to_gpus(layers)
-
     add_forward_hooks(layer_gpu_map)
 
 
