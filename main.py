@@ -253,7 +253,8 @@ def main():
     if args.net is None:
         args.net = args.model.split('/')[-1]
     # assert args.net in net_choices
-    args.model_family = args.net.split('-')[0]
+    # args.model_family = args.net.split('-')[0]
+    args.model_family = args.net
     lm = LMClass(args)
     lm.seqlen = 2048
     lm.model.eval()
