@@ -1,20 +1,19 @@
 import torch
 from torch import nn
+import torch.nn.functional as F
+
+import math, pdb, copy
+from collections import OrderedDict
 from typing import Optional, Tuple, List
+
+from models.transformation import *
 from quantize.int_linear import QuantLinear
 from quantize.int_matmul import QuantMatMul
-import torch.nn.functional as F
 from quantize.omni_norm import OmniLlamaRMSNorm
-from collections import OrderedDict
-import math
-from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding,apply_rotary_pos_emb,LlamaRMSNorm,repeat_kv
-from transformers.models.llama.configuration_llama import LlamaConfig
+
 from transformers.activations import ACT2FN
-import pdb
-import copy
-from models.transformation import *
-
-
+from transformers.models.llama.configuration_llama import LlamaConfig
+from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding, apply_rotary_pos_emb, LlamaRMSNorm, repeat_kv
 
 
 class QuantLlamaMLP(nn.Module):
@@ -48,10 +47,7 @@ class QuantLlamaMLP(nn.Module):
 class QuantLlamaAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __init__(self, 
-                 org_module: nn.Module,
-                 config: LlamaConfig,
-                 args=None):
+    def __init__(self, org_module: nn.Module, config: LlamaConfig, args=None):
         super().__init__()
         self.config = config
         self.hidden_size = config.hidden_size
@@ -69,30 +65,12 @@ class QuantLlamaAttention(nn.Module):
 
         self.rotary_emb = copy.deepcopy(org_module.rotary_emb)
 
-        self.k_proj = QuantLinear(
-            org_module.k_proj,
-            args.weight_quant_params,
-            args.act_quant_params,
-        )
-        self.v_proj = QuantLinear(
-            org_module.v_proj,
-            args.weight_quant_params,
-            args.act_quant_params,
-        )
-        self.q_proj = QuantLinear(
-            org_module.q_proj,
-            args.weight_quant_params,
-            args.act_quant_params,
-        )
-        self.o_proj = QuantLinear(
-            org_module.o_proj, args.weight_quant_params, args.act_quant_params
-        )
-        self.qkt_matmul = QuantMatMul(
-            args.q_quant_params, args.k_quant_params, matmul_func=torch.matmul
-        )
-        self.pv_matmul = QuantMatMul(
-            args.p_quant_params, args.v_quant_params, matmul_func=torch.matmul
-        )
+        self.k_proj = QuantLinear(org_module.k_proj, args.weight_quant_params, args.act_quant_params)
+        self.v_proj = QuantLinear(org_module.v_proj, args.weight_quant_params, args.act_quant_params)
+        self.q_proj = QuantLinear(org_module.q_proj, args.weight_quant_params, args.act_quant_params)
+        self.o_proj = QuantLinear(org_module.o_proj, args.weight_quant_params, args.act_quant_params)
+        self.qkt_matmul = QuantMatMul(args.q_quant_params, args.k_quant_params, matmul_func=torch.matmul)
+        self.pv_matmul = QuantMatMul(args.p_quant_params, args.v_quant_params, matmul_func=torch.matmul)
 
         self.use_weight_quant = False
         self.use_act_quant = False
@@ -108,6 +86,7 @@ class QuantLlamaAttention(nn.Module):
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
+        **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
 
@@ -121,8 +100,11 @@ class QuantLlamaAttention(nn.Module):
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
             kv_seq_len += past_key_value[0].shape[-2]
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        # cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        # query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+
+        cos, sin = self.rotary_emb(value_states, position_ids=position_ids)
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids=None)
 
 
         # [bsz, nh, t, hd]
@@ -187,7 +169,6 @@ class QuantLlamaAttention(nn.Module):
                 m.set_quant_state(weight_quant, act_quant)
                 
 
-
 class QuantLlamaDecoderLayer(nn.Module):
     def __init__(self, 
                  config: LlamaConfig,
@@ -218,6 +199,7 @@ class QuantLlamaDecoderLayer(nn.Module):
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
+        **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
         Args:
